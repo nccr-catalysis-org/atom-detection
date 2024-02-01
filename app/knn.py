@@ -15,7 +15,7 @@ import matplotlib
 import numpy as np
 import os
 import seaborn as sns
-from logger import logger
+from .logger import logger
 
 
 matplotlib.use("agg")

@@ -10,6 +10,7 @@
 from functools import lru_cache
 import sys
 
+from .tiff_utils import tiff_to_png
 if ".." not in sys.path:
     sys.path.append("..")
 
@@ -23,7 +24,6 @@ from utils.constants import ModelArgs
 from utils.paths import MODELS_PATH, DATASET_PATH
 from atoms_detection.dl_detection import DLDetection
 from atoms_detection.evaluation import Evaluation
-from tiff_utils import tiff_to_png
 
 LOGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 VOID_DS = os.path.join(DATASET_PATH, "void.csv")

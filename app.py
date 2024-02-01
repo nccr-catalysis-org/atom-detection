@@ -14,9 +14,9 @@ import sys
 import numpy as np
 from PIL import Image, ImageDraw
 import gradio as gr
-from tiff_utils import extract_physical_metadata
-from dl_inference import inference_fn
-from knn import knn, segment_image, bokeh_plot_knn, color_palette
+from app.tiff_utils import extract_physical_metadata
+from app.dl_inference import inference_fn
+from app.knn import knn, segment_image, bokeh_plot_knn, color_palette
 
 import tempfile
 import shutil
@@ -368,6 +368,5 @@ block.launch(
     share=False,
     show_error=True,
     server_name="0.0.0.0",
-    server_port=9003,
     enable_queue=True,
 )
