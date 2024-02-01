@@ -1,7 +1,7 @@
 name: Check file size
 on: 
   pull_request:
-    branches: [space]
+    branches: [main]
 
 
 jobs:
