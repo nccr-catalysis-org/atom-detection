@@ -1,0 +1,2 @@
+*.ckpt filter=lfs diff=lfs merge=lfs -text
+models/model_C_NT_CLIP.ckpt filter=lfs diff=lfs merge=lfs -text

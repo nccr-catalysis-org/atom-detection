@@ -1,4 +1,6 @@
 import os
+import sys
+import subprocess
 from glob import glob
 
 PROJECT_PATH = os.path.abspath(os.path.join(__file__, *(os.path.pardir for _ in range(2))))
@@ -39,4 +41,11 @@ PRED_GT_VIS_PATH = os.path.join(DATA_VIS_PATH, 'predictions_gt')
 LANDS_VIS_PATH = os.path.join(DATA_VIS_PATH, 'landscapes')
 ACTIVATIONS_VIS_PATH = os.path.join(DATA_VIS_PATH, 'activations')
 
-LIB_PATH = glob(f"{os.path.join(PROJECT_PATH, 'build')}/lib*")[0]
+build_path = os.path.join(PROJECT_PATH, 'build')
+lib_files = glob(f"{build_path}/lib*")
+
+if not lib_files:
+    subprocess.check_call([sys.executable, 'setup.py', 'build_ext'], cwd=PROJECT_PATH)
+    lib_files = glob(f"{build_path}/lib*")
+
+LIB_PATH = lib_files[0]

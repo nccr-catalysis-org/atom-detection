@@ -3,7 +3,7 @@
 """
 @author : Romain Graux
 @date : 2023 April 25, 14:39:03
-@last modified : 2023 September 20, 15:35:23
+@last modified : 2024 February 01, 15:59:37
 """
 
 # TODO : add the training of the vae
@@ -250,10 +250,7 @@ with gr.Blocks(css=CSS) as block:
             with gr.Row():
                 n_species = gr.Number(
                     label="Number of species",
-                    min=1,
-                    max=10,
                     value=1,
-                    step=1,
                     precision=0,
                     visible=True,
                 )
@@ -284,7 +281,7 @@ with gr.Blocks(css=CSS) as block:
             with gr.Tab("Masked prediction") as masked_tab:
                 masked_prediction_gallery = gr.Gallery(
                     label="Masked predictions"
-                ).style(columns=3)
+                )
             with gr.Tab("Nearest neighbors") as nn_tab:
                 bokeh_plot = gr.Plot(show_label=False)
                 error_html = gr.HTML(visible=False)
