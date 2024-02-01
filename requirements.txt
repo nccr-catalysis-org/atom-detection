@@ -1,4 +1,4 @@
-gradio==3.24.1
+gradio==3.21.0
 matplotlib==3.7.1
 networkx==3.0
 numpy==1.23.5
@@ -8,5 +8,8 @@ Pillow==9.5.0
 scikit_learn==1.2.2
 scipy==1.10.1
 seaborn==0.12.2
-torch==1.13.1
+torch==2.0.1
 torchvision==0.14.1
+imageio==2.26.0
+pyro-ppl==1.8.5
+bokeh==3.3.4
