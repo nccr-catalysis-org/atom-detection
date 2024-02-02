@@ -9,26 +9,32 @@
 # TODO : add the training of the vae
 # TODO : add the description of the settings
 
-import sys
 
-import numpy as np
-from PIL import Image, ImageDraw
+
+
 import gradio as gr
-from app.tiff_utils import extract_physical_metadata
+import json
+import numpy as np
+import shutil
+import sys
+import tempfile
+import torch
+
+from PIL import Image, ImageDraw
 from app.dl_inference import inference_fn
 from app.knn import knn, segment_image, bokeh_plot_knn, color_palette
-
-import tempfile
-import shutil
-import json
-from zipfile import ZipFile
-from datetime import datetime
-
+from app.tiff_utils import extract_physical_metadata
 from collections import namedtuple
+from datetime import datetime
+from zipfile import ZipFile
 
 block_state_entry = namedtuple(
     "block_state", ["results", "knn_results", "physical_metadata"]
 )
+
+if torch_availbale := torch.cuda.is_available():
+    print(f"CUDA device: {torch.cuda.get_device_name(torch.cuda.current_device())}")
+print(f"Is CUDA available: {torch_availbale}")
 
 if ".." not in sys.path:
     sys.path.append("..")
