@@ -10,8 +10,6 @@
 # TODO : add the description of the settings
 
 
-
-
 import gradio as gr
 import json
 import numpy as np
@@ -188,7 +186,7 @@ def batch_export_files(gallery, block_state):
                 files.append(metadata_path)
 
     files.append(zipObj.filename)
-    return gr.update(value=files, visible=True)
+    return gr.update(value=files[::-1], visible=True)
 
 
 CSS = """
@@ -285,9 +283,7 @@ with gr.Blocks(css=CSS) as block:
             button = gr.Button(value="Run")
         with gr.Column():
             with gr.Tab("Masked prediction") as masked_tab:
-                masked_prediction_gallery = gr.Gallery(
-                    label="Masked predictions"
-                )
+                masked_prediction_gallery = gr.Gallery(label="Masked predictions")
             with gr.Tab("Nearest neighbors") as nn_tab:
                 bokeh_plot = gr.Plot(show_label=False)
                 error_html = gr.HTML(visible=False)
@@ -365,7 +361,6 @@ The software is provided “as is”, without warranty of any kind, express or i
             </div>
             """
     )
-
 
 block.launch(
     share=False,
