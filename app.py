@@ -56,14 +56,23 @@ def inf(img, n_species, threshold, architecture):
     return img, results
 
 
-def batch_fn(files, n_species, threshold, architecture, block_state, progress=gr.Progress()):
-    # progress(0, desc="Starting...")
+def batch_fn(
+    files, n_species, threshold, architecture, block_state, progress=gr.Progress()
+):
+    progress(0, desc="Starting...")
     block_state = {}
     if not files:
         raise ValueError("No files were uploaded")
 
     gallery = []
-    for file in progress.tqdm(files, desc="Processing images"):
+    for file_idx, file in enumerate(files):
+        base_progress = file_idx / len(files)
+        display_progress = lambda value, text=None: progress(
+            base_progress + (1 / len(files)) * value,
+            desc=f"Processing image {file_idx+1}/{len(files)}{' - ' + text if text else '...'}",
+        )
+        display_progress(0)
+        display_progress(0.1, "Extracting metadata...")
         error_physical_metadata = None
         try:
             physical_metadata = extract_physical_metadata(file.name)
@@ -72,11 +81,13 @@ def batch_fn(files, n_species, threshold, architecture, block_state, progress=gr
         except Exception as e:
             error_physical_metadata = e
             physical_metadata = None
-
         original_file_name = file.name.split("/")[-1]
+        display_progress(0.2, "Inference...")
         img, results = inf(file.name, n_species, threshold, architecture)
+        display_progress(0.8, "Segmentation...")
         mask = segment_image(file.name)
         gallery.append((img, original_file_name))
+        display_progress(1, "Done")
 
         if physical_metadata is not None:
             factor = 1.0 - np.mean(mask)
