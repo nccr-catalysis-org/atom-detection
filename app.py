@@ -56,13 +56,14 @@ def inf(img, n_species, threshold, architecture):
     return img, results
 
 
-def batch_fn(files, n_species, threshold, architecture, block_state):
+def batch_fn(files, n_species, threshold, architecture, block_state, progress=gr.Progress()):
+    # progress(0, desc="Starting...")
     block_state = {}
     if not files:
         raise ValueError("No files were uploaded")
 
     gallery = []
-    for file in files:
+    for file in progress.tqdm(files, desc="Processing images"):
         error_physical_metadata = None
         try:
             physical_metadata = extract_physical_metadata(file.name)
