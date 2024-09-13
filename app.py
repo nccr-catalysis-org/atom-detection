@@ -10,6 +10,7 @@
 # TODO : add the description of the settings
 
 
+import os
 import gradio as gr
 import json
 import numpy as np
@@ -18,7 +19,7 @@ import sys
 import tempfile
 import torch
 
-from PIL import Image, ImageDraw
+from PIL import ImageDraw
 from app.dl_inference import inference_fn
 from app.knn import knn, segment_image, bokeh_plot_knn, color_palette
 from app.tiff_utils import extract_physical_metadata
@@ -45,7 +46,7 @@ def inf(img, n_species, threshold, architecture):
     img, results = inference_fn(architecture, img, threshold, n_species=n_species)
     draw = ImageDraw.Draw(img)
     for (k, v), color in zip(results["species"].items(), color_palette):
-        color = "#" + "".join([f"{int(255 * x):02x}" for x in color])
+        color = "#{:02x}{:02x}{:02x}".format(*[int(255 * x) for x in color])
         draw.text((5, 5 + 15 * k), f"species {k}", fill=color)
         for x, y in v["coords"]:
             draw.ellipse(
@@ -62,47 +63,68 @@ def batch_fn(
     progress(0, desc="Starting...")
     block_state = {}
     if not files:
-        raise ValueError("No files were uploaded")
+        raise gr.Error("No files were uploaded")
+    
+    if any(not file.name.lower().endswith(('.tif', '.tiff')) for file in files):
+        raise gr.Error("Only TIFF images are supported")
 
     gallery = []
+    error_messages = []
+
     for file_idx, file in enumerate(files):
         base_progress = file_idx / len(files)
-        display_progress = lambda value, text=None: progress(
-            base_progress + (1 / len(files)) * value,
-            desc=f"Processing image {file_idx+1}/{len(files)}{' - ' + text if text else '...'}",
-        )
-        display_progress(0)
+
+        def display_progress(value, text=None):
+            progress(
+                base_progress + (1 / len(files)) * value,
+                desc=f"Processing image {file_idx+1}/{len(files)}{' - ' + text if text else '...'}",
+            )
+        
+
         display_progress(0.1, "Extracting metadata...")
-        error_physical_metadata = None
+        physical_metadata = None
         try:
             physical_metadata = extract_physical_metadata(file.name)
             if physical_metadata.unit != "nm":
                 raise ValueError(f"Unit of {file.name} is not nm, cannot process it")
         except Exception as e:
-            error_physical_metadata = e
-            physical_metadata = None
-        original_file_name = file.name.split("/")[-1]
-        display_progress(0.2, "Inference...")
-        img, results = inf(file.name, n_species, threshold, architecture)
-        display_progress(0.8, "Segmentation...")
-        mask = segment_image(file.name)
-        gallery.append((img, original_file_name))
-        display_progress(1, "Done")
+            error_messages.append(f"Error processing {file.name}: {str(e)}")
+            continue  # Skip to the next file
 
-        if physical_metadata is not None:
-            factor = 1.0 - np.mean(mask)
-            scale = physical_metadata.pixel_width
-            edge = physical_metadata.pixel_width * physical_metadata.width
-            knn_results = {
-                k: knn(results["species"][k]["coords"], scale, factor, edge)
-                for k in results["species"]
-            }
-        else:
-            knn_results = None
+        original_file_name = os.path.basename(file.name)
+        sanitized_file_name = original_file_name.replace(" ", "_")
+        temp_file_path = os.path.join(tempfile.gettempdir(), sanitized_file_name)
 
-        block_state[original_file_name] = block_state_entry(
-            results, knn_results, physical_metadata
-        )
+        try:
+            shutil.copy2(file.name, temp_file_path)
+
+            display_progress(0.2, "Inference...")
+            img, results = inf(temp_file_path, n_species, threshold, architecture)
+
+            display_progress(0.8, "Segmentation...")
+            mask = segment_image(temp_file_path)
+            gallery.append((img, original_file_name))
+
+            if physical_metadata is not None:
+                factor = 1.0 - np.mean(mask)
+                scale = physical_metadata.pixel_width
+                edge = physical_metadata.pixel_width * physical_metadata.width
+                knn_results = {
+                    k: knn(results["species"][k]["coords"], scale, factor, edge)
+                    for k in results["species"]
+                }
+            else:
+                knn_results = None
+
+            block_state[original_file_name] = block_state_entry(
+                results, knn_results, physical_metadata
+            )
+            display_progress(1, "Done")
+        except Exception as e:
+            error_messages.append(f"Error processing {file.name}: {str(e)}")
+        finally:
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
 
     knn_args = [
         (
@@ -115,21 +137,30 @@ def batch_fn(
         for original_file_name in block_state
         if block_state[original_file_name].knn_results is not None
     ]
-    if len(knn_args) > 0:
-        bokeh_plot = gr.update(
-            value=bokeh_plot_knn(knn_args, with_cumulative=True), visible=True
-        )
-    else:
-        bokeh_plot = gr.update(visible=False)
+
+    bokeh_plot = gr.update(
+        value=bokeh_plot_knn(knn_args, with_cumulative=True) if knn_args else None,
+        visible=bool(knn_args),
+    )
+
+    error_html = gr.update(
+        value="<br>".join(
+            [
+                f"<p style='width:fit-content; background-color:rgba(255, 0, 0, 0.75); border-radius:5px; padding:5px; color:white;'>{msg}</p>"
+                for msg in error_messages
+            ]
+        ),
+        visible=bool(error_messages),
+    )
+
     return (
         gallery,
         block_state,
-        gr.update(visible=True),
+        gr.update(
+            visible=bool(gallery)
+        ),  # Show export button only if there are results
         bokeh_plot,
-        gr.HTML.update(
-            value=f"<p style='width:fit-content; background-color:rgba(255, 0, 0, 0.75); border-radius:5px; padding:5px; color:white;'>{error_physical_metadata}</p>",
-            visible=bool(error_physical_metadata),
-        ),
+        error_html,
     )
 
 
@@ -153,14 +184,13 @@ def batch_export_files(gallery, block_state):
     with ZipFile(
         f"{tmpdir}/all_results_{datetime.now().isoformat()}.zip", "w"
     ) as zipObj:
-        # Add all metatada
-        for data_dict, original_file_name in gallery:
+        # Add all metadata
+        for img_path, original_file_name in gallery:
             file_name = original_file_name.split(".")[0]
 
-            # Save the image
+            # Copy the image
             pred_map_path = f"{tmpdir}/pred_map_{file_name}.png"
-            file_path = data_dict["name"]
-            shutil.copy(file_path, pred_map_path)
+            shutil.copy2(img_path, pred_map_path)
             zipObj.write(pred_map_path, arcname=f"{file_name}/pred_map.png")
             files.append(pred_map_path)
 
@@ -204,29 +234,33 @@ def batch_export_files(gallery, block_state):
 CSS = """
         .header {
             display: flex;
-            justify-content: center;
+            flex-direction: row;
             align-items: center;
-            padding: var(--block-padding);
-            border-radius: var(--block-radius);
-            background: var(--button-secondary-background-hover);
+            justify-content: flex-start;
+            padding: 12px;
+            gap: 12px;
+            border-radius: 4px;
+            background: var(--block-background-fill);
         }
 
-        img {
+        .header img {
             width: 150px;
-            margin-right: 40px;
+            height: auto;
         }
 
         .title {
             text-align: left;
         }
 
-        h1 {
-            font-size: 36px;
-            margin-bottom: 10px;
+        .title h1 {
+            font-size: 28px;
+            margin-bottom: 5px;
         }
 
-        p {
+        .title h2 {
             font-size: 18px;
+            font-weight: normal;
+            margin-top: 0;
         }
 
         input {
@@ -246,68 +280,101 @@ CSS = """
 """
 
 
-with gr.Blocks(css=CSS) as block:
+COLORS = {
+    "primary": {
+        "name": "nccr-catalysis-primary",
+        "c50": "#faecef",
+        "c100": "#f4d9df",
+        "c200": "#e9b3bf",
+        "c300": "#de8d9f",
+        "c400": "#d3677f",
+        "c500": "#c8415f",
+        "c600": "#a0344c",
+        "c700": "#782739",
+        "c800": "#501a26",
+        "c900": "#280d13",
+        "c950": "#14060a",
+    },
+    "secondary": {
+        "name": "nccr-catalysis-secondary",
+        "c50": "#fff8ed",
+        "c100": "#fef0da",
+        "c200": "#fde1b5",
+        "c300": "#fcd290",
+        "c400": "#fbc36b",
+        "c500": "#fab446",
+        "c600": "#c89038",
+        "c700": "#966c2a",
+        "c800": "#64481c",
+        "c900": "#32240e",
+        "c950": "#191207",
+    },
+}
+
+with gr.Blocks(
+    theme=gr.themes.Soft(
+        primary_hue=gr.themes.colors.Color(**COLORS["primary"]),
+        secondary_hue=gr.themes.colors.Color(**COLORS["secondary"]),
+        spacing_size=gr.themes.sizes.spacing_sm,
+        radius_size=gr.themes.sizes.radius_sm,
+        text_size=gr.themes.sizes.text_sm,
+    ),
+    css=CSS,
+) as block:
     block_state = gr.State({})
-    gr.HTML(
+
+    gr.Markdown(
         """
         <div class="header">
-            <a href="https://www.nccr-catalysis.ch/" target="_blank">
-                <img src="https://www.nccr-catalysis.ch/site/assets/files/1/nccr_catalysis_logo.svg" alt="NCCR Catalysis">
-            </a>
+            <img src="https://www.nccr-catalysis.ch/site/assets/files/1/nccr_catalysis_logo.svg" alt="NCCR Catalysis">
             <div class="title">
                 <h1>Atom Detection</h1>
-                <p>Quantitative description of metal center organization in single-atom catalysts</p>
+                <h2>Quantitative description of metal center organization in single-atom catalysts</h2>
             </div>
+            
         </div>
         """
     )
+
     with gr.Row():
         with gr.Column():
-            with gr.Row():
-                n_species = gr.Number(
-                    label="Number of species",
-                    value=1,
-                    precision=0,
-                    visible=True,
-                )
-                threshold = gr.Slider(
-                    minimum=0.0,
-                    maximum=1.0,
-                    value=0.8,
-                    label="Threshold",
-                    visible=True,
-                )
-                architecture = gr.Dropdown(
-                    label="Architecture",
-                    choices=[
-                        ModelArgs.BASICCNN,
-                        # ModelArgs.RESNET18,
-                    ],
-                    value=ModelArgs.BASICCNN,
-                    visible=False,
-                )
-            files = gr.Files(
-                label="Images",
-                file_types=[".tif", ".tiff"],
-                type="file",
-                interactive=True,
+            n_species = gr.Number(label="Number of species", value=1, precision=0)
+            threshold = gr.Slider(
+                minimum=0.0,
+                maximum=1.0,
+                value=0.8,
+                label="Threshold",
+                info="Threshold for the confidence of the prediction",
             )
-            button = gr.Button(value="Run")
+            architecture = gr.Dropdown(
+                label="Architecture",
+                choices=[ModelArgs.BASICCNN],
+                value=ModelArgs.BASICCNN,
+                visible=False,
+            )
+            files = gr.File(
+                label="Images", file_types=[".tif", ".tiff"], file_count="multiple"
+            )
+            run_button = gr.Button("Run", variant="primary")
+
         with gr.Column():
-            with gr.Tab("Masked prediction") as masked_tab:
-                masked_prediction_gallery = gr.Gallery(label="Masked predictions")
-            with gr.Tab("Nearest neighbors") as nn_tab:
-                bokeh_plot = gr.Plot(show_label=False)
-                error_html = gr.HTML(visible=False)
-            export_btn = gr.Button(value="Export files", visible=False)
+            with gr.Tabs():
+                with gr.TabItem("Masked prediction"):
+                    masked_prediction_gallery = gr.Gallery(label="Masked predictions")
+                with gr.TabItem("Nearest neighbors"):
+                    bokeh_plot = gr.Plot(show_label=False)
+                    error_html = gr.HTML(visible=False)
+
+            export_btn = gr.Button("Export files", visible=False)
             exported_files = gr.File(
                 label="Exported files",
                 file_count="multiple",
-                type="file",
+                type="filepath",
                 interactive=False,
                 visible=False,
             )
-    button.click(
+
+    run_button.click(
         batch_fn,
         inputs=[files, n_species, threshold, architecture, block_state],
         outputs=[
@@ -318,65 +385,52 @@ with gr.Blocks(css=CSS) as block:
             error_html,
         ],
     )
+
     export_btn.click(
-        batch_export_files, [masked_prediction_gallery, block_state], [exported_files]
-    )
-    with gr.Accordion(label="How to ✨", open=True):
-        gr.HTML(
-            """
-            <div style="font-size: 14px;">
-            <ol>
-                <li>Select one or multiple microscopy images as <b>.tiff files</b> 📷🔬</li>
-                <li>Upload individual or multiple .tif images for processing 📤🔢</li>
-                <li>Export the output files. The generated zip archive will contain:
-                    <ul>
-                        <li>An image with overlayed atomic positions 🌟🔍</li>
-                        <li>A table of atomic positions (in px) along with their probability 📊💎</li>
-                        <li>Physical metadata of the respective images 📄🔍</li>
-                        <li>JSON-formatted plot data 📊📝</li>
-                    </ul>
-                </li>
-            </ol>
-            <details style="padding: 5px; border-radius: 5px; background: var(--button-secondary-background-hover); font-size: 14px;">
-            <summary>Note</summary>
-            <ul style="padding-left: 10px;">
-            <li>
-            Structural descriptors beyond pixel-wise atom detections are available as outputs only if images present an embedded real-space calibration (e.g., in <a href="https://imagej.nih.gov/ij/docs/guide/146-30.html#sub:Set-Scale...">nm px-1</a>) 📷🔬
-            </li>
-            <li>
-            32-bit images will be processed correctly, but appear as mostly white in the image preview window
-            </li>
-            </ul>
-            </details>
-            </div>
-     """
-        )
-    with gr.Accordion(label="Disclaimer and License", open=False):
-        gr.HTML(
-            """
-            <div class="acknowledgments">
-                <h3>Disclaimer</h3>
-                <p>NCCR licenses the Atom Detection Web-App utilisation “as is” with no express or implied warranty of any kind. NCCR specifically disclaims all express or implied warranties to the fullest extent allowed by applicable law, including without limitation all implied warranties of merchantability, title or fitness for any particular purpose or non-infringement. No oral or written information or advice given by the authors shall create or form the basis of any warranty of any kind.</p>
-                <h3>License</h3>
-                <p>Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-<br>
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-<br>
-The software is provided “as is”, without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose and noninfringement. In no event shall the authors or copyright holders be liable for any claim, damages or other liability, whether in an action of contract, tort or otherwise, arising from, out of or in connection with the software or the use or other dealings in the software.</p>
-            </div>
-            """
-        )
-    gr.HTML(
-        """
-            <div style="background-color: var(--secondary-100); border-radius: 5px; padding: 10px;">
-                <p style='font-size: 14px; color: black'>To reference the use of this web app in a publication, please refer to the Atom Detection web app and the development described in this publication: K. Rossi et al. Adv. Mater. 2023, <a href="https://doi.org/10.1002/adma.202307991">doi:10.1002/adma.202307991</a>.</p>
-            </div>
-            """
+        batch_export_files,
+        inputs=[masked_prediction_gallery, block_state],
+        outputs=[exported_files],
     )
 
-block.launch(
-    share=False,
-    show_error=True,
-    server_name="0.0.0.0",
-    enable_queue=True,
-)
+    with gr.Accordion("How to ✨", open=True):
+        gr.Markdown(
+            """
+            1. Select one or multiple microscopy images as **.tiff files** 📷🔬
+            2. Upload individual or multiple .tif images for processing 📤🔢
+            3. Export the output files. The generated zip archive will contain:
+                - An image with overlayed atomic positions 🌟🔍
+                - A table of atomic positions (in px) along with their probability 📊💎
+                - Physical metadata of the respective images 📄🔍
+                - JSON-formatted plot data 📊📝
+            
+            > **Note:**
+            > - Structural descriptors beyond pixel-wise atom detections are available as outputs only if images present an embedded real-space calibration (e.g., in [nm px-1](https://imagej.nih.gov/ij/docs/guide/146-30.html#sub:Set-Scale...)) 📷🔬
+            > - 32-bit images will be processed correctly, but appear as mostly white in the image preview window
+            """
+        )
+
+    with gr.Accordion("Disclaimer and License", open=False):
+        gr.Markdown(
+            """
+            ### Disclaimer
+            NCCR licenses the Atom Detection Web-App utilisation "as is" with no express or implied warranty of any kind. NCCR specifically disclaims all express or implied warranties to the fullest extent allowed by applicable law, including without limitation all implied warranties of merchantability, title or fitness for any particular purpose or non-infringement. No oral or written information or advice given by the authors shall create or form the basis of any warranty of any kind.
+
+            ### License
+            Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+            The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+            The software is provided "as is", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose and noninfringement. In no event shall the authors or copyright holders be liable for any claim, damages or other liability, whether in an action of contract, tort or otherwise, arising from, out of or in connection with the software or the use or other dealings in the software.
+            """
+        )
+
+    gr.Markdown(
+        """
+        > To reference the use of this web app in a publication, please refer to the Atom Detection web app and the development described in this publication: K. Rossi et al. Adv. Mater. 2023, [doi:10.1002/adma.202307991](https://doi.org/10.1002/adma.202307991).
+        """
+    )
+
+if __name__ == "__main__":
+    block.launch(
+        server_port=5001,
+    )
