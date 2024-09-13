@@ -64,8 +64,8 @@ def batch_fn(
     block_state = {}
     if not files:
         raise gr.Error("No files were uploaded")
-    
-    if any(not file.name.lower().endswith(('.tif', '.tiff')) for file in files):
+
+    if any(not file.name.lower().endswith((".tif", ".tiff")) for file in files):
         raise gr.Error("Only TIFF images are supported")
 
     gallery = []
@@ -79,7 +79,6 @@ def batch_fn(
                 base_progress + (1 / len(files)) * value,
                 desc=f"Processing image {file_idx+1}/{len(files)}{' - ' + text if text else '...'}",
             )
-        
 
         display_progress(0.1, "Extracting metadata...")
         physical_metadata = None
@@ -431,6 +430,4 @@ with gr.Blocks(
     )
 
 if __name__ == "__main__":
-    block.launch(
-        server_port=5001,
-    )
+    block.launch()
