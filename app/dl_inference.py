@@ -11,6 +11,7 @@ from functools import lru_cache
 import sys
 
 from .tiff_utils import tiff_to_png
+
 if ".." not in sys.path:
     sys.path.append("..")
 
@@ -78,7 +79,7 @@ def multimers_classification(
     for e in range(epochs):
         trainer.step(train_loader, scale_factor=scale_factor)
         trainer.print_statistics()
-    
+
     # Extract latent space (only mean) from VAE
     z_mean, _ = rvae.encode(torch_crops)
 
@@ -150,7 +151,9 @@ def inference_fn(
     # if img.max() <= 1:
     #     raise ValueError("Gradio seems to preprocess badly the tiff images. Did you adapt the preprocessing function as mentionned in the app.py file comments?")
     prepro_img, _, pred_map = detection.image_to_pred_map(img, return_intermediate=True)
-    center_coords_list, likelihood_list = (np.array(x) for x in detection.pred_map_to_atoms(pred_map))
+    center_coords_list, likelihood_list = (
+        np.array(x) for x in detection.pred_map_to_atoms(pred_map)
+    )
     results = (
         multimers_classification(
             img=prepro_img,
@@ -161,7 +164,6 @@ def inference_fn(
         if n_species > 1
         else {
             0: {
-                
                 "coords": center_coords_list,
                 "likelihood": likelihood_list,
                 "confidence": np.ones(len(center_coords_list)),
@@ -173,8 +175,8 @@ def inference_fn(
             Evaluation.center_coords_to_bbox(center_coords)
             for center_coords in v["coords"]
         ]
-    return tiff_to_png(image), {
-        "image": tiff_to_png(image),
+    return tiff_to_png(Image.fromarray(prepro_img)), {
+        "image": tiff_to_png(Image.fromarray(prepro_img)),
         "pred_map": pred_map,
         "species": results,
     }

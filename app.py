@@ -85,10 +85,10 @@ def batch_fn(
         try:
             physical_metadata = extract_physical_metadata(file.name)
             if physical_metadata.unit != "nm":
-                raise ValueError(f"Unit of {file.name} is not nm, cannot process it")
+                raise gr.Error(f"Unit of {file.name} is not nm, cannot process it")
         except Exception as e:
             error_messages.append(f"Error processing {file.name}: {str(e)}")
-            continue  # Skip to the next file
+            raise gr.Error(f"Error processing {file.name}: {str(e)}")
 
         original_file_name = os.path.basename(file.name)
         sanitized_file_name = original_file_name.replace(" ", "_")

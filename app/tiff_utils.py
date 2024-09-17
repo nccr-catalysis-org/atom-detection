@@ -6,34 +6,93 @@
 @last modified : 2023 September 19, 11:18:36
 """
 
+from typing import Callable, Optional
 import re
 import imageio
-import numpy as np
 from collections import namedtuple
+import numpy as np
 
-physical_metadata = namedtuple("physical_metadata", ["width", "height", "pixel_width", "pixel_height", "unit"])
+PhysicalMetadata = namedtuple(
+    "PhysicalMetadata", ["width", "height", "pixel_width", "pixel_height", "unit"]
+)
 
-def extract_physical_metadata(image_path : str, strict:bool=True) -> physical_metadata:
+MetadataExtractor = Callable[[dict, int, int], Optional[PhysicalMetadata]]
+
+
+def extract_imagej_metadata(
+    metadata: dict, width: int, height: int
+) -> Optional[PhysicalMetadata]:
+    try:
+        ipw, iph, _ = metadata["resolution"]
+        result = re.search(r"unit=(.+)", metadata["description"])
+        if not result:
+            return None
+        unit = result.group(1)
+        return PhysicalMetadata(width, height, 1.0 / ipw, 1.0 / iph, unit.lower())
+    except (KeyError, AttributeError):
+        return None
+
+
+def extract_resolution_metadata(
+    metadata: dict, width: int, height: int
+) -> Optional[PhysicalMetadata]:
+    try:
+        ipw, iph, _ = metadata["resolution"]
+        # It looks like the resolution unit is not really reliable, so let's just assume nm
+        unit = "nm"
+        return PhysicalMetadata(width, height, 1.0 / ipw, 1.0 / iph, unit)
+    except (KeyError, AttributeError):
+        return None
+
+
+METADATA_EXTRACTORS: list[MetadataExtractor] = [
+    extract_imagej_metadata,
+    extract_resolution_metadata,
+]
+
+
+def normalize_metadata(metadata: PhysicalMetadata) -> PhysicalMetadata:
+    conversion_factor = {
+        "inch": 2.54e7,
+        "m": 1e9,
+        "dm": 1e8,
+        "cm": 1e7,
+        "mm": 1e6,
+        "µm": 1e3,
+        "nm": 1,
+    }
+    if metadata.unit not in conversion_factor:
+        raise ValueError(f"Unknown unit: {metadata.unit}")
+    factor = conversion_factor[metadata.unit]
+    return PhysicalMetadata(
+        metadata.width,
+        metadata.height,
+        metadata.pixel_width * factor,
+        metadata.pixel_height * factor,
+        "nm",
+    )
+
+
+def extract_physical_metadata(image_path: str, strict: bool = True) -> PhysicalMetadata:
     """
-    Extracts the physical metadata of an image (only tiff for now)
+    Extracts the physical metadata of an image by trying all available extractors.
+    Raises ValueError if no extractor succeeds.
     """
     with open(image_path, "rb") as f:
         data = f.read()
-        reader = imageio.get_reader(data, format=".tif")
+        reader = imageio.get_reader(data)
         metadata = reader.get_meta_data()
 
-    if strict and not metadata['is_imagej']:
-        for key, value in metadata.items():
-            if key.startswith("is_") and value == True: # Force bool to be True, because it can also pass the condition while being an random object
-                raise ValueError(f"The image is not TIFF image, but it seems to be a {key[3:]} image")
-        raise ValueError("Impossible to extract metadata from the image (ImageJ)")
     h, w = reader.get_next_data().shape
-    ipw, iph, _ = metadata['resolution']
-    result = re.search(r"unit=(.+)", metadata['description'])
-    if strict and not result:
-        raise ValueError(f"No scale unit found in the image description : {metadata['description']}")
-    unit = result and result.group(1)
-    return physical_metadata(w, h, 1. / ipw, 1. / iph, unit)
+    for extractor in METADATA_EXTRACTORS:
+        result = extractor(metadata, w, h)
+        if result is not None:
+            return normalize_metadata(result)
+
+    raise ValueError(
+        "Failed to extract metadata from the image using any available method."
+    )
+
 
 def tiff_to_png(image, inplace=True):
     img = image if inplace else image.copy()
