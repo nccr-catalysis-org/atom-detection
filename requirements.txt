@@ -52,6 +52,7 @@ httpx==0.27.2
 huggingface-hub==0.24.7
 identify==2.5.33
 idna==3.4
+imagecodecs==2024.12.30
 imageio==2.26.0
 importlib_resources==6.4.5
 iniconfig==2.0.0
